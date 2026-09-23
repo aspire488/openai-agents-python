@@ -2016,6 +2016,90 @@ class TestStripOrphanedAssistantIds:
             assert "id" not in item
 
 
+class TestCompactionClearResponseState:
+    @pytest.mark.asyncio
+    async def test_clear_session_resets_response_chain_state(self) -> None:
+        backend = SimpleListSession(
+            history=[{"role": "user", "content": "old"}]
+        )
+        client = MagicMock()
+        client.responses.compact = AsyncMock()
+        session = OpenAIResponsesCompactionSession(
+            "test",
+            backend,
+            client=client,
+        )
+        session._response_id = "resp-old"
+        session._deferred_response_id = "resp-deferred"
+        session._last_unstored_response_id = "resp-unstored"
+        session._compaction_candidate_items = [{"role": "assistant", "content": "old"}]
+        session._session_items = [{"role": "user", "content": "old"}]
+
+        await session.clear_session()
+
+        assert await backend.get_items() == []
+        assert session._response_id is None
+        assert session._deferred_response_id is None
+        assert session._last_unstored_response_id is None
+        assert session._compaction_candidate_items == []
+        assert session._session_items == []
+
+
+    @pytest.mark.asyncio
+    async def test_clear_session_preserves_response_chain_state_when_clear_fails(self) -> None:
+        class FailingClearSession(SimpleListSession):
+            async def clear_session(self) -> None:
+                raise RuntimeError("clear failed")
+
+        backend = FailingClearSession(
+            history=[{"role": "user", "content": "old"}]
+        )
+        session = OpenAIResponsesCompactionSession(
+            "test",
+            backend,
+        )
+        session._response_id = "resp-old"
+        session._deferred_response_id = "resp-deferred"
+        session._last_unstored_response_id = "resp-unstored"
+
+        with pytest.raises(RuntimeError, match="clear failed"):
+            await session.clear_session()
+
+        assert session._response_id == "resp-old"
+        assert session._deferred_response_id == "resp-deferred"
+        assert session._last_unstored_response_id == "resp-unstored"
+        assert await backend.get_items() == [{"role": "user", "content": "old"}]
+
+
+    @pytest.mark.asyncio
+    async def test_clear_session_requires_new_response_for_previous_response_id_compaction(self) -> None:
+        backend = SimpleListSession()
+        client = MagicMock()
+        client.responses.compact = AsyncMock()
+        session = OpenAIResponsesCompactionSession(
+            "test",
+            backend,
+            client=client,
+        )
+        session._response_id = "resp-old"
+        session._last_unstored_response_id = "resp-old"
+
+        await session.clear_session()
+
+        with pytest.raises(
+            ValueError,
+            match="requires a response_id when using previous_response_id compaction",
+        ):
+            await session.run_compaction(
+                {
+                    "force": True,
+                    "compaction_mode": "previous_response_id",
+                }
+            )
+
+        client.responses.compact.assert_not_awaited()
+
+
 class TestCompactionMutationSerialization:
     @pytest.mark.asyncio
     async def test_resumed_save_carries_generation_into_compaction(self) -> None:
