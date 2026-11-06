@@ -930,6 +930,9 @@ class AnyLLMModel(Model):
                 }
             elif http_options is None:
                 extra_kwargs["http_options"] = {"headers": headers}
+        elif self._provider_name == "mistral":
+            existing_headers = extra_kwargs.get("http_headers") or {}
+            extra_kwargs["http_headers"] = {**existing_headers, **headers}
         else:
             extra_kwargs["extra_headers"] = headers
 
