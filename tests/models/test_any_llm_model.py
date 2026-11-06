@@ -591,6 +591,38 @@ async def test_any_llm_google_chat_headers_use_http_options(
             assert configured_options["headers"] == {"X-Existing": "existing"}
 
 
+@pytest.mark.allow_call_model_methods
+@pytest.mark.asyncio
+async def test_any_llm_mistral_chat_uses_http_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = FakeAnyLLMProvider(supports_responses=False, chat_response=_chat_completion("Hello"))
+    module, _create_calls = _import_any_llm_module(monkeypatch, provider)
+    model = module.AnyLLMModel(model="mistral/mistral-small-latest", api="chat_completions")
+
+    await model.get_response(
+        system_instructions=None,
+        input="hi",
+        model_settings=ModelSettings(
+            extra_args={"http_headers": {"X-Existing": "existing"}},
+            extra_headers={"X-Test-Header": "test"},
+        ),
+        tools=[],
+        output_schema=None,
+        handoffs=[],
+        tracing=ModelTracing.DISABLED,
+        previous_response_id=None,
+        conversation_id=None,
+        prompt=None,
+    )
+
+    call = provider.chat_calls[0]
+    assert "extra_headers" not in call
+    assert call["http_headers"] == {
+        "X-Existing": "existing",
+        "User-Agent": f"Agents/Python {__version__}",
+        "X-Test-Header": "test",
+    }
+
+
 @pytest.mark.parametrize("provider_name", ["gemini", "vertexai"])
 @pytest.mark.parametrize("content_type", ["model", "dictionary"])
 def test_any_llm_google_provider_normalizes_function_result_roles(
